@@ -40,7 +40,7 @@ select{font:inherit;padding:6px;border-radius:6px;border:1px solid var(--bd);bac
 <body>
 <div class="wrap">
 <h1>Pending / Follow-up Order Filter</h1>
-<p class="sub">Upload the order CSV. Only <b>Pending</b>, <b>Pending Payment</b>, <b>Follow Up</b> and <b>Follow Up Pending</b> rows with a unique mobile number are kept. Everything runs in your browser; no data is uploaded anywhere.</p>
+<p class="sub">Upload the order CSV. Only <b>Pending</b>, <b>Pending Payment</b>, <b>Follow Up</b> and <b>Follow Up Pending</b> rows with a unique mobile number and a Check In Date of today or later are kept. Everything runs in your browser; no data is uploaded anywhere.</p>
 
 <div class="card">
   <div class="drop" id="drop"><b>Click to choose</b> or drag &amp; drop the order CSV here<input type="file" id="file" accept=".csv,text/csv" class="hide"></div>
@@ -102,6 +102,12 @@ function mapCols(h){
     "Status":status
   };
 }
+const parseDate=s=>{s=(s||"").trim();if(!s)return null;let y,mo,d,x;
+  if(x=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/)){y=+x[1];mo=+x[2];d=+x[3]}
+  else if(x=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/)){d=+x[1];mo=+x[2];y=+x[3];if(y<100)y+=2000}
+  else if(x=s.match(/^(\d{1,2})[\s-]+([A-Za-z]{3,})[\s,-]+(\d{4})/)){const i="janfebmaraprmayjunjulaugsepoctnovdec".indexOf(x[2].slice(0,3).toLowerCase());if(i<0||i%3)return null;d=+x[1];mo=i/3+1;y=+x[3]}
+  else{const t=new Date(s);if(isNaN(t))return null;return new Date(t.getFullYear(),t.getMonth(),t.getDate())}
+  return new Date(y,mo-1,d)};
 const phoneKey=s=>{const d=(s||"").replace(/\D/g,"");return d.length>10?d.slice(-10):d};
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -120,24 +126,28 @@ function process(){
   // Step 2: lookup each number in the full file; drop it if it exists in any other status
   const bad=new Set();
   rows.forEach(r=>{const k=phoneKey(get(r,m.phone));if(k&&!OK.has(norm(get(r,m.status))))bad.add(k)});
-  let nStatus=0,nBad=0;
+  let nStatus=0,nBad=0,nPast=0,nUnk=0;
+  const now=new Date(),today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
   const stage=[];
   all.filter(o=>o.keep).forEach(o=>{
     if(!OK.has(norm(get(o.r,m.status)))){nStatus++;return}
     if(o.k&&bad.has(o.k)){nBad++;return}
+    const cd=parseDate(get(o.r,m["Check In Date"]));
+    if(!cd)nUnk++;else if(cd<today){nPast++;return}
     stage.push(o);
   });
   result=stage.map(o=>OUT.map(c=>get(o.r,m[c])));
   const num=v=>{const n=parseFloat(String(v).replace(/[^0-9.\-]/g,""));return isNaN(n)?-Infinity:n};
   result.sort((a,b)=>num(b[6])-num(a[6]));
   const noPhone=stage.filter(o=>!o.k).length;
-  const S=[["Total rows",rows.length],["1. Removed: duplicate number",nDup],["2. Removed: status not allowed",nStatus],["2. Removed: number found in other status",nBad],["Final rows",result.length,1]];
+  const S=[["Total rows",rows.length],["1. Removed: duplicate number",nDup],["2. Removed: status not allowed",nStatus],["2. Removed: number found in other status",nBad],["3. Removed: past check-in date",nPast],["Final rows",result.length,1]];
   document.getElementById("stats").innerHTML=S.map(s=>`<div class="st ${s[2]?"fin":""}"><div class="n">${s[1]}</div><div class="l">${s[0]}</div></div>`).join("");
   document.getElementById("tbl").innerHTML="<thead><tr>"+OUT.map(h=>`<th>${h}</th>`).join("")+"</tr></thead><tbody>"+
     result.map(r=>"<tr>"+r.map((v,i)=>`<td${i===8?' class="c"':""}>${esc(v)}</td>`).join("")+"</tr>").join("")+"</tbody>";
   const miss=OUT.filter(c=>m[c]<0);
   let w="";
   if(miss.length)w+=`Column not found in CSV (left blank): ${miss.join(", ")}. `;
+  if(nUnk)w+=`${nUnk} row(s) have a Check In Date that could not be read, so they were kept. `;
   if(noPhone)w+=`${noPhone} row(s) have no mobile number, so they were kept as they are. `;
   showMsg(w,"warn");
   document.getElementById("out").classList.remove("hide");
